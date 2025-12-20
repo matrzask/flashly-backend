@@ -102,6 +102,12 @@ async function updateCard(req, res) {
       `UPDATE cards SET ${updates.join(', ')} WHERE id = $${paramCount++} AND deck_id = $${paramCount++} RETURNING *`,
       values
     );
+
+    // Update the deck's updated_at timestamp
+    await pool.query(
+        'UPDATE decks SET updated_at = NOW() WHERE id = $1',
+        [deck_id]
+    );
     
     res.json(result.rows[0]);
   } catch (err) {
