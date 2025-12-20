@@ -2,15 +2,18 @@ const pool = require('../db');
 const { toCardDTOArray } = require('../dtos/cardDTO');
 
 /**
- * Get all cards for a specific deck owned by the authenticated user
+ * Get all cards for a specific deck (owned by user or public)
  */
 async function getCardsByDeckId(req, res) {
   const { deck_id } = req.params;
   try {
-    // Verify deck ownership
-    const deckCheck = await pool.query('SELECT id FROM decks WHERE id = $1 AND owner_id = $2', [deck_id, req.user.id]);
+    // Verify deck is owned by user or is public
+    const deckCheck = await pool.query(
+      'SELECT id, public FROM decks WHERE id = $1 AND (owner_id = $2 OR public = true)',
+      [deck_id, req.user.id]
+    );
     if (deckCheck.rows.length === 0) {
-      return res.status(403).send('Access denied: deck not found or not owned by user');
+      return res.status(403).json({ status: 'fail', message: 'Access denied: deck not found or not accessible' });
     }
     
     const result = await pool.query('SELECT * FROM cards WHERE deck_id = $1', [deck_id]);
@@ -22,83 +25,124 @@ async function getCardsByDeckId(req, res) {
 }
 
 /**
- * Update cards for a deck (sync operation: delete removed, update existing, insert new)
+ * Add a new card to a deck
  */
-async function updateCards(req, res) {
-  const { deckId, cards } = req.body;
-  if (!deckId || !Array.isArray(cards)) {
-    return res.status(400).send('deck_id and cards array required');
+async function addCard(req, res) {
+  const { deck_id } = req.params;
+  const { front, back } = req.body;
+  
+  if (!front) {
+    return res.status(400).json({ status: 'fail', message: 'Front is required' });
   }
-
-  const client = await pool.connect();
+  
   try {
-    await client.query('BEGIN');
-
     // Verify deck ownership
-    const deckCheck = await client.query('SELECT id FROM decks WHERE id = $1 AND owner_id = $2', [deckId, req.user.id]);
+    const deckCheck = await pool.query('SELECT id FROM decks WHERE id = $1 AND owner_id = $2', [deck_id, req.user.id]);
     if (deckCheck.rows.length === 0) {
-      await client.query('ROLLBACK');
-      client.release();
-      return res.status(403).send('Access denied: deck not found or not owned by user');
+      return res.status(403).json({ status: 'fail', message: 'Access denied: deck not found or not owned by user' });
     }
-
-    // Get current card ids for the deck
-    const { rows: existingCards } = await client.query(
-      'SELECT id FROM cards WHERE deck_id = $1',
-      [deckId]
+    
+    const result = await pool.query(
+      'INSERT INTO cards (deck_id, front, back) VALUES ($1, $2, $3) RETURNING *',
+      [deck_id, front, back || '']
     );
-    const existingIds = existingCards.map(c => c.id);
-
-    // Split incoming cards into new and existing
-    const incomingIds = cards.filter(c => c.id).map(c => c.id);
-    const toDelete = existingIds.filter(id => !incomingIds.includes(id));
-
-    // Delete cards not present in the new list
-    if (toDelete.length > 0) {
-      await client.query(
-        'DELETE FROM cards WHERE deck_id = $1 AND id = ANY($2::uuid[])',
-        [deckId, toDelete]
-      );
-    }
-
-    // Update existing cards
-    for (const card of cards) {
-      if (card.id && existingIds.includes(card.id)) {
-        await client.query(
-          'UPDATE cards SET front = $1, back = $2, updated_at = NOW() WHERE id = $3 AND deck_id = $4',
-          [card.front, card.back, card.id, deckId]
-        );
-      }
-    }
-
-    // Insert new cards (no id)
-    for (const card of cards) {
-      if (!card.id) {
-        await client.query(
-          'INSERT INTO cards (deck_id, front, back) VALUES ($1, $2, $3)',
-          [deckId, card.front, card.back]
-        );
-      }
-    }
-
-    await client.query('COMMIT');
-
-    // Return updated list
-    const { rows: updatedCards } = await client.query(
-      'SELECT * FROM cards WHERE deck_id = $1',
-      [deckId]
-    );
-    res.json(toCardDTOArray(updatedCards));
+    
+    res.status(201).json(result.rows[0]);
   } catch (err) {
-    await client.query('ROLLBACK');
     console.error(err);
-    res.status(500).send('Failed to sync cards');
-  } finally {
-    client.release();
+    res.status(500).send('Failed to add card');
+  }
+}
+
+/**
+ * Update an existing card
+ */
+async function updateCard(req, res) {
+  const { deck_id, card_id } = req.params;
+  const { front, back } = req.body;
+  
+  if (front === undefined && back === undefined) {
+    return res.status(400).json({ status: 'fail', message: 'Front or back is required' });
+  }
+  
+  try {
+    // Verify deck ownership
+    const deckCheck = await pool.query('SELECT id FROM decks WHERE id = $1 AND owner_id = $2', [deck_id, req.user.id]);
+    if (deckCheck.rows.length === 0) {
+      return res.status(403).json({ status: 'fail', message: 'Access denied: deck not found or not owned by user' });
+    }
+    
+    // Verify card belongs to deck
+    const cardCheck = await pool.query('SELECT id FROM cards WHERE id = $1 AND deck_id = $2', [card_id, deck_id]);
+    if (cardCheck.rows.length === 0) {
+      return res.status(404).json({ status: 'fail', message: 'Card not found in this deck' });
+    }
+    
+    // Build dynamic update query
+    const updates = [];
+    const values = [];
+    let paramCount = 1;
+    
+    if (front !== undefined) {
+      if (!front) {
+        return res.status(400).json({ status: 'fail', message: 'Front cannot be empty' });
+      }
+      updates.push(`front = $${paramCount++}`);
+      values.push(front);
+    }
+    
+    if (back !== undefined) {
+      updates.push(`back = $${paramCount++}`);
+      values.push(back);
+    }
+    
+    values.push(card_id, deck_id);
+    
+    const result = await pool.query(
+      `UPDATE cards SET ${updates.join(', ')} WHERE id = $${paramCount++} AND deck_id = $${paramCount++} RETURNING *`,
+      values
+    );
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Failed to update card');
+  }
+}
+
+/**
+ * Delete a card from a deck
+ */
+async function deleteCard(req, res) {
+  const { deck_id, card_id } = req.params;
+  
+  try {
+    // Verify deck ownership
+    const deckCheck = await pool.query('SELECT id FROM decks WHERE id = $1 AND owner_id = $2', [deck_id, req.user.id]);
+    if (deckCheck.rows.length === 0) {
+      return res.status(403).json({ status: 'fail', message: 'Access denied: deck not found or not owned by user' });
+    }
+    
+    // Verify card belongs to deck and delete
+    const result = await pool.query(
+      'DELETE FROM cards WHERE id = $1 AND deck_id = $2 RETURNING id',
+      [card_id, deck_id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ status: 'fail', message: 'Card not found in this deck' });
+    }
+    
+    res.status(204).send();
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Failed to delete card');
   }
 }
 
 module.exports = {
   getCardsByDeckId,
-  updateCards
+  addCard,
+  updateCard,
+  deleteCard
 };
