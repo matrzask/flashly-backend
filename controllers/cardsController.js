@@ -46,6 +46,12 @@ async function addCard(req, res) {
       'INSERT INTO cards (deck_id, front, back) VALUES ($1, $2, $3) RETURNING *',
       [deck_id, front, back || '']
     );
+
+    // Update the deck's updated_at timestamp
+    await pool.query(
+        'UPDATE decks SET updated_at = NOW() WHERE id = $1',
+        [deck_id]
+    );
     
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -102,6 +108,12 @@ async function updateCard(req, res) {
       `UPDATE cards SET ${updates.join(', ')} WHERE id = $${paramCount++} AND deck_id = $${paramCount++} RETURNING *`,
       values
     );
+
+    // Update the deck's updated_at timestamp
+    await pool.query(
+        'UPDATE decks SET updated_at = NOW() WHERE id = $1',
+        [deck_id]
+    );
     
     res.json(result.rows[0]);
   } catch (err) {
@@ -131,6 +143,13 @@ async function deleteCard(req, res) {
     
     if (result.rows.length === 0) {
       return res.status(404).json({ status: 'fail', message: 'Card not found in this deck' });
+    }
+    else {
+        // Update the deck's updated_at timestamp
+        await pool.query(
+            'UPDATE decks SET updated_at = NOW() WHERE id = $1',
+            [deck_id]
+        );
     }
     
     res.status(204).send();
