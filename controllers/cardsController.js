@@ -10,7 +10,7 @@ async function getCardsByDeckId(req, res) {
     // Verify deck is owned by user or is public
     const deckCheck = await pool.query(
       'SELECT id, public FROM decks WHERE id = $1 AND (owner_id = $2 OR public = true)',
-      [deck_id, req.user.id]
+      [deck_id, req.user?.id]
     );
     if (deckCheck.rows.length === 0) {
       return res.status(403).json({ status: 'fail', message: 'Access denied: deck not found or not accessible' });

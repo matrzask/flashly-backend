@@ -1,10 +1,10 @@
 var express = require('express');
 var router = express.Router();
 const { getCardsByDeckId, addCard, updateCard, deleteCard } = require('../controllers/cardsController');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, optionalProtect } = require('../middleware/authMiddleware');
 
 /* GET all cards for a specific deck. */
-router.get('/:deck_id', protect, getCardsByDeckId);
+router.get('/:deck_id', optionalProtect, getCardsByDeckId);
 
 /* POST add a new card to a deck. */
 router.post('/:deck_id', protect, addCard);
