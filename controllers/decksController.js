@@ -151,12 +151,60 @@ async function getPublicDecks(req, res) {
   }
 }
 
+/**
+ * Copy a public deck to the authenticated user's collection
+ */
+async function copyPublicDeck(req, res) {
+  const { id } = req.params;
+  
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    // Verify the deck exists and is public
+    const deckCheck = await client.query(
+      'SELECT * FROM decks WHERE id = $1 AND public = true',
+      [id]
+    );
+    
+    if (deckCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      client.release();
+      return res.status(404).json({ status: 'fail', message: 'Public deck not found' });
+    }
+    
+    const originalDeck = deckCheck.rows[0];
+    
+    // Create a copy of the deck for the authenticated user
+    const newDeck = await client.query(
+      'INSERT INTO decks (owner_id, name, public) VALUES ($1, $2, $3) RETURNING *',
+      [req.user.id, originalDeck.name + ' (Copy)', false]
+    );
+    
+    // Copy all cards from the original deck
+    await client.query(
+      'INSERT INTO cards (deck_id, front, back) SELECT $1, front, back FROM cards WHERE deck_id = $2',
+      [newDeck.rows[0].id, id]
+    );
+    
+    await client.query('COMMIT');
+    res.status(201).json(toDeckDTO(newDeck.rows[0]));
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).send('Failed to copy deck');
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   getAllDecks,
   createDeck,
   getDeckById,
   updateDeck,
   deleteDeck,
-  getPublicDecks
+  getPublicDecks,
+  copyPublicDeck
 };
 

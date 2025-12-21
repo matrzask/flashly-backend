@@ -1,10 +1,13 @@
 var express = require('express');
 var router = express.Router();
-const { getAllDecks, createDeck, getDeckById, updateDeck, deleteDeck, getPublicDecks } = require('../controllers/decksController');
+const { getAllDecks, createDeck, getDeckById, updateDeck, deleteDeck, getPublicDecks, copyPublicDeck } = require('../controllers/decksController');
 const { protect } = require('../middleware/authMiddleware');
 
 /* GET all public decks. */
 router.get('/public', getPublicDecks);
+
+/* POST copy a public deck. */
+router.post('/:id/copy', protect, copyPublicDeck);
 
 /* GET all user decks. */
 router.get('/', protect, getAllDecks);
