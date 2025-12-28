@@ -11,14 +11,17 @@
 function toDeckDTO(deck) {
   if (!deck) return null;
   
-  return {
+  const dto = {
     id: deck.id,
     owner_id: deck.owner_id,
     name: deck.name,
     public: deck.public,
     created_at: deck.created_at,
-    updated_at: deck.updated_at
+    updated_at: deck.updated_at,
+    author: deck.author_name || null
   };
+  
+  return dto;
 }
 
 /**

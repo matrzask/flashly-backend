@@ -139,12 +139,76 @@ async function deleteDeck(req, res) {
 }
 
 /**
- * Get all public decks
+ * Get all public decks with pagination and filters
  */
 async function getPublicDecks(req, res) {
   try {
-    const result = await pool.query('SELECT * FROM decks WHERE public = true ORDER BY created_at DESC');
-    res.json(toDeckDTOArray(result.rows));
+    // Parse pagination parameters
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+    
+    // Parse filter parameters
+    const nameFilter = req.query.name || '';
+    const authorFilter = req.query.author || '';
+    
+    // Build dynamic WHERE clause
+    const conditions = ['d.public = true'];
+    const values = [];
+    let paramCount = 1;
+    
+    if (nameFilter) {
+      conditions.push(`d.name ILIKE $${paramCount++}`);
+      values.push(`%${nameFilter}%`);
+    }
+    
+    if (authorFilter) {
+      conditions.push(`u.name ILIKE $${paramCount++}`);
+      values.push(`%${authorFilter}%`);
+    }
+    
+    const whereClause = conditions.join(' AND ');
+    
+    // Get total count for pagination metadata
+    const countQuery = `
+      SELECT COUNT(*) 
+      FROM decks d 
+      JOIN users u ON d.owner_id = u.id 
+      WHERE ${whereClause}
+    `;
+    const countResult = await pool.query(countQuery, values);
+    const totalItems = parseInt(countResult.rows[0].count);
+    const totalPages = Math.ceil(totalItems / limit);
+    
+    // Get paginated results with author information
+    values.push(limit, offset);
+    const dataQuery = `
+      SELECT 
+        d.id, 
+        d.owner_id, 
+        d.name, 
+        d.public, 
+        d.created_at, 
+        d.updated_at,
+        u.name as author_name
+      FROM decks d
+      JOIN users u ON d.owner_id = u.id
+      WHERE ${whereClause}
+      ORDER BY d.created_at DESC
+      LIMIT $${paramCount++} OFFSET $${paramCount++}
+    `;
+    const result = await pool.query(dataQuery, values);
+    
+    res.json({
+      data: toDeckDTOArray(result.rows),
+      pagination: {
+        page,
+        limit,
+        totalItems,
+        totalPages,
+        hasMore: page < totalPages
+      }
+    });
   } catch (err) {
     console.error(err);
     res.status(500).send('Database query failed');
